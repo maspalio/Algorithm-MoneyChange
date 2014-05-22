@@ -1,8 +1,41 @@
+#
+# Package.
+#
+
 package Algorithm::MoneyChange;
+
+#
+# Export.
+#
+
+use Exporter 'import';
+
+@EXPORT_OK = qw(
+  build_graph
+  coin_attribute
+  coins_sets
+  done_attribute
+  edge_attribute
+  rip_sets
+);
+
+#
+# Bitch.
+#
 
 use 5.006;
 use strict;
 use warnings FATAL => 'all';
+
+#
+# Dependencies.
+#
+
+use Graph::Easy;
+
+#
+# Documentation.
+#
 
 =head1 NAME
 
@@ -19,34 +52,267 @@ our $VERSION = '0.01';
 
 =head1 SYNOPSIS
 
-Quick summary of what the module does.
+Money change problem, as per SICP's L<Tree Recursion|http://mitpress.mit.edu/sicp/full-text/book/book-Z-H-11.html#%_sec_1.2.2>.
 
-Perhaps a little code snippet.
+Same walking algorithm but first degenerate case is used to build a "done" (i.e., label == '---') leaf node.
+Coins sets are ripped by walking tree from root to these nodes, harvesting "coin" (i.e., labeled with a coin value) edges.
 
-    use Algorithm::MoneyChange;
+Use it like:
 
-    my $foo = Algorithm::MoneyChange->new();
-    ...
+    use Algorithm::MoneyChange qw( coins_sets build_graph rip_sets );
+    
+    # either:
+    my $sets = coins_sets ({ amount => 10, denominations => [ qw( 2 5 10 ) ] });
+    # or:
+    my $graph = build_graph ({ amount => 10, denominations => [ qw( 2 5 10 ) ] });
+    my $sets  = rip_sets ({ graph => $graph });
+    
+    use YAML::XS qw( Dump );
+    print Dump ( $sets );
+    ---
+    - - 2
+      - 2
+      - 2
+      - 2
+      - 2
+    - - 5
+      - 5
+    - - 10
+    
+    print + $graph->as_ascii;
+    +-------------------+     +---------------+     +------------+  2   +-----------+  2   +-----------+  2   +-----------+  2   +-----------+  2   +-----+
+    | 10 ~ [ 10, 5, 2 ] | --> | 10 ~ [ 5, 2 ] | --> | 10 ~ [ 2 ] | ---> | 8 ~ [ 2 ] | ---> | 6 ~ [ 2 ] | ---> | 4 ~ [ 2 ] | ---> | 2 ~ [ 2 ] | ---> | --- |
+    +-------------------+     +---------------+     +------------+      +-----------+      +-----------+      +-----------+      +-----------+      +-----+
+      |                         |
+      | 10                      | 5
+      v                         v
+    +-------------------+     +---------------+     +------------+  2   +-----------+  2   +-----------+
+    |        ---        |     | 5 ~ [ 5, 2 ]  | --> | 5 ~ [ 2 ]  | ---> | 3 ~ [ 2 ] | ---> | 1 ~ [ 2 ] |
+    +-------------------+     +---------------+     +------------+      +-----------+      +-----------+
+                                |
+                                | 5
+                                v
+                              +---------------+
+                              |      ---      |
+                              +---------------+
+
+L</build_graph> function returns a L<Graph::Easy> instance.
 
 =head1 EXPORT
 
 A list of functions that can be exported.  You can delete this section
 if you don't export anything, such as for a purely object-oriented module.
 
-=head1 SUBROUTINES/METHODS
+    build_graph
+    coin_attribute
+    coins_sets
+    done_attribute
+    edge_attribute
+    rip_sets
 
-=head2 function1
+=head1 SUBROUTINES
 
 =cut
 
-sub function1 {
+#
+# Globals.
+#
+
+my $DONE = { color => 'DarkSlateGrey', label => '---', shape => 'octagon', fill => 'Chartreuse' };
+my $EDGE = { color => 'gray' };
+my $COIN = { color => 'ForestGreen' };
+
+my ( $ID, $FIRST_DENOMINATION );
+
+#
+# Graph.
+#
+
+sub _attribute {
+  my ( $h, $a ) = @_;
+  
+  if ( ref $a eq 'HASH' ) {
+    $h = $a;
+  }
+  elsif ( $a ) {
+    return $h->{$a};
+  }
+  
+  return $h;
 }
 
-=head2 function2
+sub done_attribute { return _attribute ( $DONE => shift ) }
+sub edge_attribute { return _attribute ( $EDGE => shift ) }
+sub coin_attribute { return _attribute ( $COIN => shift ) }
 
-=cut
+sub reset_node_name {
+  $ID = 0;
+}
 
-sub function2 {
+sub new_node_name {
+  return 'N' . $ID++;
+}
+
+sub add_node {
+  my ( $option ) = @_;
+  
+  my $n = $option->{graph}->add_node ( my $name = new_node_name () );
+  
+  $n->set_attribute ( title => $name ) unless $option->{attribute}->{title};
+  
+  if ( $option->{attribute} ) {
+    $n->set_attribute ( $_ => $option->{attribute}->{$_} ) for keys %{$option->{attribute}};
+  }
+  
+  return $n;
+}
+
+sub add_edge {
+  my ( $option ) = @_;
+  
+  return unless $option->{rhs};
+  
+  my $e = $option->{graph}->add_edge ( $option->{lhs}, $option->{rhs} );
+  
+  if ( $option->{attribute} ) {
+    $e->set_attribute ( $_ => $option->{attribute}->{$_} ) for keys %{$option->{attribute}};
+  }
+  if ( $option->{label} ) {
+    $e->set_attribute ( label => $option->{label} );
+  }
+  
+  return $e;
+}
+
+sub new_graph {
+  my ( $option ) = @_;
+  
+  reset_node_name ();
+  
+  return Graph::Easy->new ( $option // {} );
+}
+
+#
+# Denominations.
+#
+
+sub build_first_denomination {
+  my ( $denominations ) = @_;
+  
+  undef $FIRST_DENOMINATION;
+  
+  my $i = 1;
+  
+  $FIRST_DENOMINATION->{$i++} = $_ for @$denominations;
+}
+
+sub first_denomination {
+  my ( $kinds_of_coins ) = @_;
+  
+  return $FIRST_DENOMINATION->{$kinds_of_coins};
+}
+
+sub first_denominations {
+  my ( $kinds_of_coins ) = @_;
+  
+  return map { $FIRST_DENOMINATION->{$_} } sort { $b cmp $a } grep { $_ <= $kinds_of_coins } keys %$FIRST_DENOMINATION;
+}
+
+#
+# Build.
+#
+
+sub _build_graph {
+  my ( $g, $amount, $kinds_of_coins ) = @_;
+  
+  return 0 if $kinds_of_coins == 0 || $amount < 0;
+  
+  return add_node ({ graph => $g, attribute => done_attribute () }) if $amount == 0;
+  
+  my $n = add_node ({ graph => $g, attribute => { label => "$amount ~ [ " . join ( ", ", first_denominations ( $kinds_of_coins ) ) . " ]" } });
+  
+  my $denomination = first_denomination ( $kinds_of_coins );
+  
+  add_edge ({ graph => $g, lhs => $n, rhs => _build_graph ( $g, $amount,                 $kinds_of_coins - 1 ), attribute => edge_attribute () });
+  add_edge ({ graph => $g, lhs => $n, rhs => _build_graph ( $g, $amount - $denomination, $kinds_of_coins     ), attribute => coin_attribute (), label => $denomination });
+  
+  return $n;
+}
+
+sub build_graph {
+  my ( $option ) = @_;
+  
+  build_first_denomination ( $option->{denominations} );
+  
+  my $g = new_graph ( $option->{graph_option} );
+  
+  _build_graph ( $g, $option->{amount}, scalar ( keys %$FIRST_DENOMINATION ) );
+  
+  return $g;
+}
+
+#
+# Walk.
+#
+
+sub rip_sets {
+  my ( $option ) = @_;
+    
+  my ( $sets, $ls, $walk_ );
+  
+  my $walk = sub {
+    my ( $n ) = @_;
+
+    return $sets unless $n;
+
+    if ( $n->label eq done_attribute ( 'label' ) ) {
+      push @$sets, [ sort { $b cmp $a } @$ls ];
+
+      return $sets;
+    }
+
+    for my $e ( $n->outgoing ) {
+      my $l = $e->label;
+
+      push @$ls, $l if $l;
+
+      $walk_->( $e->to );
+
+      pop @$ls if $l;
+    }
+    
+    return $sets;
+  };
+  
+  $walk_ = $walk;
+  
+  my $root = ( $option->{graph}->source_nodes )[0];
+  
+  return sort_sets ( $walk->( $root, [] ) );
+}
+
+#
+# Sort.
+#
+
+sub sort_sets {
+  my ( $sets ) = @_;
+  
+  return [ map { $_->[1] } sort { $a->[0] <=> $b->[0] } map { [ scalar ( @$_ ) . '.' . $_->[0], $_ ] } @$sets ];
+}
+
+#
+# Core.
+#
+
+sub coins_sets {
+  my ( $option ) = @_;
+  
+  if ( my $g = build_graph ( $option ) ) {
+    return rip_sets ({ graph => $g });
+  }
+  
+  return;
 }
 
 =head1 AUTHOR
@@ -58,9 +324,6 @@ Xavier Caron, C<< <xcaron at gmail.com> >>
 Please report any bugs or feature requests to C<bug-algorithm-moneychange at rt.cpan.org>, or through
 the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Algorithm-MoneyChange>.  I will be notified, and then you'll
 automatically be notified of progress on your bug as I make changes.
-
-
-
 
 =head1 SUPPORT
 
