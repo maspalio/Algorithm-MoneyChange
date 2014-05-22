@@ -1,3 +1,4 @@
+.gitignore
 Changes
 lib/Algorithm/MoneyChange.pm
 Makefile.PL
